@@ -1,0 +1,94 @@
+version: "3.8"
+
+services:
+    traefik:
+        image: traefik:v2.11
+        container_name: traefik
+        command:
+            - --api.insecure=true
+            - --providers.docker
+            - --entrypoints.web.address=:80
+            - --providers.docker.exposedbydefault=false
+            - --providers.docker.network=cc_net
+            - --providers.docker.swarmmode=false
+        ports:
+            - "80:80"
+            - "8080:8080" # Traefik dashboard
+            - "3306:3306" # MySQL port
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+        networks:
+            - cc_net
+
+    mysql:
+        image: mysql:8.0
+        container_name: db
+        environment:
+            MYSQL_ROOT_PASSWORD: test_password
+            MYSQL_DATABASE: course_catalog
+            MYSQL_USER: test_user
+            MYSQL_PASSWORD: test_password
+        volumes:
+            - db_data:/var/lib/mysql
+            - ./database/migrations/1713358478_example.sql:/docker-entrypoint-initdb.d/init.sql
+        networks:
+            - cc_net
+        labels:
+            - "traefik.enable=true"
+            - "traefik.tcp.routers.mysql.entrypoints=mysql"
+            - "traefik.tcp.routers.mysql.rule=HostSNI(`*`)"
+            - "traefik.tcp.services.mysql.loadbalancer.server.port=3306"
+
+    api:
+        image: php:8.1-apache
+        build:
+            context: ./api
+            dockerfile: Dockerfile
+        container_name: api
+        volumes:
+            - ./api:/var/www/html/
+        networks:
+            - cc_net
+        depends_on:
+            - mysql
+        environment:
+            DB_HOST: db
+            DB_PORT: 3306
+            DB_DATABASE: course_catalog
+            DB_USERNAME: test_user
+            DB_PASSWORD: test_password
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.api.rule=Host(`api.cc.localhost`)"
+            - "traefik.http.routers.api.entrypoints=web"
+            - "traefik.http.services.api.loadbalancer.server.port=80"
+            - "traefik.http.routers.api.service=api"
+        command: >
+            /bin/sh -c "
+            apt-get update && \
+            apt-get install -y --no-install-recommends libpq-dev libzip-dev && \
+            docker-php-ext-install pdo pdo_mysql zip && \
+            a2enmod rewrite && \
+            exec docker-php-entrypoint apache2-foreground
+            "
+
+    frontend:
+        build:
+            context: ./frontend
+        container_name: cc_frontend
+        depends_on:
+            - api
+        networks:
+            - cc_net
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.frontend.rule=Host(`cc.localhost`)"
+            - "traefik.http.routers.frontend.entrypoints=web"
+            - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+            - "traefik.http.routers.frontend.service=frontend"
+
+networks:
+    cc_net:
+
+volumes:
+    db_data:

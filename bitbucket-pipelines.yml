@@ -1,0 +1,6 @@
+
+pipelines:
+
+  custom:
+    sonar-scan-shared:
+      import: sonar-pipeline:stable:shared-sonar-config
